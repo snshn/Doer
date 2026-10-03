@@ -1,71 +1,73 @@
-#include <QTimer>
+#include <QDir>
+#include <QLocalServer>
+#include <QLocalSocket>
 
 #include "singleinstance.hpp"
 
+// X11/Windows headers define macros (None, Bool, ...) that clash with Qt,
+// so they must come after all Qt includes.
 #if defined(Q_OS_WIN)
 #include <windows.h>
 #elif !defined(Q_OS_MACOS)
 #include <X11/Xlib.h>
 #endif
 
-SingleInstance::SingleInstance(QWidget *parent, QString *progName) : QObject(parent)
-{
-    shmemName = progName + QString("_shrdmmr");
-    smphorName = progName + QString("_smphr");
-}
+static const int CONNECT_TIMEOUT_MS = 500;
+static const QByteArray RAISE_MSG = "raise";
 
-SingleInstance::~SingleInstance()
+SingleInstance::SingleInstance(QWidget *parent, const QString &progName)
+    : QObject(parent)
 {
+    // Per-user name, so different users on one machine don't collide
+    serverName = progName + "-" + QDir::home().dirName();
 }
 
 bool SingleInstance::isAlreadyRunning(const bool raiseExisting)
 {
-    QSystemSemaphore sem(smphorName, 1);
-
-    // Fix danging memory on Linux
+    // Is another instance listening?
     {
-        QSharedMemory fix(shmemName);
-        fix.attach();
-    }
+        QLocalSocket socket;
+        socket.connectToServer(serverName);
 
-    shMem = new QSharedMemory(shmemName);
-    if (shMem->create(sizeof(SharedData))) { // This is the first instance
-        shMem->attach();
-
-        sem.acquire();
-        memset(shMem->data(), 0, shMem->size());
-        sem.release();
-
-        QTimer* t = new QTimer(this);
-        connect(t, &QTimer::timeout, this, [this]() {
-            QSystemSemaphore sem(smphorName, 1);
-            sem.acquire();
-            SharedData* data = reinterpret_cast<SharedData*>(shMem->data());
-            if (data->needToRaiseExistingWindow) {
-                SingleInstance::raiseWindow((QWidget*)parent());
-                data->needToRaiseExistingWindow = false;
+        if (socket.waitForConnected(CONNECT_TIMEOUT_MS)) {
+            if (raiseExisting) {
+                socket.write(RAISE_MSG);
+                socket.waitForBytesWritten(CONNECT_TIMEOUT_MS);
             }
-
-            sem.release();
-        });
-        t->start(0);
-    } else { // Another instance is already running
-        shMem->attach();
-
-        sem.acquire();
-        SharedData* data = reinterpret_cast<SharedData*>(shMem->data());
-        data->needToRaiseExistingWindow = raiseExisting;
-
-        return true;
+            socket.disconnectFromServer();
+            return true;
+        }
     }
+
+    // We're the first instance. Clear a stale socket left behind by a crash,
+    // then listen. Nothing runs until a second instance actually connects.
+    QLocalServer::removeServer(serverName);
+
+    server = new QLocalServer(this);
+    connect(server, &QLocalServer::newConnection, this, [this]() {
+        while (QLocalSocket *client = server->nextPendingConnection()) {
+            connect(client, &QLocalSocket::readyRead, this, [this, client]() {
+                if (client->readAll().contains(RAISE_MSG)) {
+                    raiseWindow(qobject_cast<QWidget*>(parent()));
+                }
+            });
+            connect(client, &QLocalSocket::disconnected,
+                    client, &QObject::deleteLater);
+        }
+    });
+    server->listen(serverName);
 
     return false;
 }
 
 void SingleInstance::raiseWindow(QWidget *window)
 {
+    if (!window) {
+        return;
+    }
+
 #if defined(Q_OS_WIN) // Windows
-    Window winId = window->effectiveWinId();
+    HWND winId = reinterpret_cast<HWND>(window->effectiveWinId());
 
     SetWindowPos(winId, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SetWindowPos(winId, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
@@ -77,7 +79,7 @@ void SingleInstance::raiseWindow(QWidget *window)
     Window winId = window->effectiveWinId();
 
     if (winId > 0) {
-        Display* disp = XOpenDisplay(nullptr);
+        Display *disp = XOpenDisplay(nullptr);
 
         if (disp) {
             XWindowAttributes attributes;
@@ -87,27 +89,21 @@ void SingleInstance::raiseWindow(QWidget *window)
                 XRaiseWindow(disp, winId);
 
                 // Show window if minimized, instead of just highlighting its icon
-                {
-                    const Atom atom = XInternAtom(disp, "_NET_ACTIVE_WINDOW", True);
+                const Atom atom = XInternAtom(disp, "_NET_ACTIVE_WINDOW", True);
 
-                    if (atom != None) {
-                        XEvent xev;
+                if (atom != None) {
+                    XEvent xev = {};
 
-                        xev.xclient.type = ClientMessage;
-                        xev.xclient.serial = 0;
-                        xev.xclient.send_event = True;
-                        xev.xclient.message_type = atom;
-                        xev.xclient.display = disp;
-                        xev.xclient.window = winId;
-                        xev.xclient.format = 32;
-                        xev.xclient.data.l[0] = 1;
-                        xev.xclient.data.l[1] = 0;
-                        xev.xclient.data.l[2] = None;
-                        xev.xclient.data.l[3] = 0;
-                        xev.xclient.data.l[4] = 0;
+                    xev.xclient.type = ClientMessage;
+                    xev.xclient.send_event = True;
+                    xev.xclient.message_type = atom;
+                    xev.xclient.display = disp;
+                    xev.xclient.window = winId;
+                    xev.xclient.format = 32;
+                    xev.xclient.data.l[0] = 1;
 
-                        XSendEvent(disp, DefaultRootWindow(disp), False, SubstructureRedirectMask | SubstructureNotifyMask, &xev);
-                    }
+                    XSendEvent(disp, DefaultRootWindow(disp), False,
+                               SubstructureRedirectMask | SubstructureNotifyMask, &xev);
                 }
             }
 

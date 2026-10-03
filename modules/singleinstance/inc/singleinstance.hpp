@@ -1,27 +1,22 @@
 #pragma once
 
-#include <QSharedMemory>
-#include <QSystemSemaphore>
+#include <QObject>
+#include <QString>
 #include <QWidget>
+
+class QLocalServer;
 
 class SingleInstance : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit SingleInstance(QWidget *parent = Q_NULLPTR, QString *progName = new QString());
-    ~SingleInstance();
+    SingleInstance(QWidget *parent, const QString &progName);
 
-    bool isAlreadyRunning(const bool raiseExisting = false);
+    bool isAlreadyRunning(bool raiseExisting);
     static void raiseWindow(QWidget *window);
 
 private:
-    struct SharedData
-    {
-        bool needToRaiseExistingWindow = false;
-    };
-
-    QSharedMemory *shMem;
-    QString shmemName;
-    QString smphorName;
+    QString serverName;
+    QLocalServer *server = nullptr;
 };

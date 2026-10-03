@@ -3,6 +3,7 @@
 #include <QAction>
 #include <QMainWindow>
 #include <QSettings>
+#include <QTimer>
 
 #include "singleinstance.hpp"
 
@@ -16,33 +17,35 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = Q_NULLPTR);
-    ~MainWindow();
+    ~MainWindow(void);
 
     bool isAlreadyRunning(void);
 
-public slots:
-    void exitFullScreen(void);
-    void quitApplication(void);
-    void toggleFullScreen(void);
-
 protected:
     void closeEvent(QCloseEvent *event) override;
-    void moveEvent(QMoveEvent *event) override;
-    void resizeEvent(QResizeEvent *event) override;
-
-    bool ready = false;
+    // void moveEvent(QMoveEvent *event) override;
+    // void resizeEvent(QResizeEvent *event) override;
 
 private slots:
     void on_textArea_cursorPositionChanged(void);
     void on_textArea_textChanged(void);
 
-private:
-    QSettings *settings;
-    Ui::MainWindow *ui;
-    QByteArray windowGeometry;
-    SingleInstance *singleInstance;
+    void saveState(void);
+    void exitFullScreen(void);
+    void quitApplication(void);
+    void toggleFullScreen(void);
 
+private:
     void applyStyle(void);
     void bindShortcuts(void);
     void loadSettings(void);
+
+    Ui::MainWindow *ui;
+    SingleInstance *singleInstance = Q_NULLPTR;
+    QSettings *settings = Q_NULLPTR;
+    QTimer saveTimer;
+    // QByteArray windowGeometry;
+
+    bool ready = false;
+    bool textDirty = false;
 };

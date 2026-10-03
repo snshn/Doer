@@ -1,4 +1,5 @@
 #include <csignal>
+
 #include <QApplication>
 #include <QDebug>
 
@@ -6,6 +7,7 @@
 
 MainWindow *mainWindow;
 
+#if defined(Q_OS_UNIX)
 static void onSignalHandler(int signum)
 {
     if (mainWindow) {
@@ -18,10 +20,11 @@ static void onSignalHandler(int signum)
 
     exit(128 + signum);
 }
+#endif
 
 int main(int argc, char *argv[])
 {
-#if defined(__GNUC__) && defined(Q_OS_LINUX)
+#if defined(Q_OS_UNIX)
     signal(SIGHUP,  onSignalHandler);
     signal(SIGINT,  onSignalHandler);
     signal(SIGQUIT, onSignalHandler);
@@ -38,11 +41,13 @@ int main(int argc, char *argv[])
     signal(SIGXFSZ, onSignalHandler);
 #endif
 
+#if QT_VERSION >= QT_VERSION_CHECK(5, 6, 0) && QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     // Account for running on high-DPI displays
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+#endif
 
-    QApplication a(argc, argv);
+    QApplication app(argc, argv);
 
     QApplication::setApplicationName(PROG_NAME);
     QApplication::setApplicationDisplayName("Doer");
@@ -58,5 +63,5 @@ int main(int argc, char *argv[])
 
     mainWindow->show();
 
-    return a.exec();
+    return app.exec();
 }
