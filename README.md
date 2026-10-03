@@ -40,4 +40,4 @@ Use [doer.qss](res/stylesheets/doer.qss) as a reference.
 
 ## License
 
-This is free and unencumbered software released into the public domain.
+Zero-Clause BSD
